@@ -1,4 +1,0 @@
-export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=artsharestorage;AccountKey=zCN3F1TuFjeSw8alIDF0bcvSQoLe5tJHRcavpRKZ31JUUkPuHLtVSqP9WJ3oQU7ty/ZAisWl8CDcFtZHsZ15MQ==;EndpointSuffix=core.windows.net"
-export TWILIO_ACCOUNT_SID=ACce268cc948742f9dcec8827d91f45965
-export TWILIO_AUTH_TOKEN=1d407a9350de8d6260cfb5ea64969299
-export CLIENT_BASE_URI=http://localhost:3000

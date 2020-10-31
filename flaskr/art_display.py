@@ -1,14 +1,18 @@
-import os
+import os, uuid
 from flask import (
     Blueprint, g, request, session, jsonify, current_app, url_for
 )
 from werkzeug.utils import secure_filename
-
+from azure.cosmosdb.table.tableservice import TableService
+from azure.cosmosdb.table.models import Entity
+from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 from flaskr.db import get_db
+from twilio.rest import Client
 
 bp = Blueprint('art_display', __name__)
 
 ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif'}
+PARITION_KEY = "p_key"
 
 def allowed_file(filename):
     return '.' in filename and \
@@ -16,16 +20,18 @@ def allowed_file(filename):
 
 @bp.route('/artdisplays', methods=['GET'])
 def getAll():
-    db = get_db()
-    cur = db.cursor()
-    artdisplays = cur.execute(
-        'SELECT *'
-        ' FROM artDisplay'
-        ' ORDER BY created DESC'
-    ).fetchall()
-    cur.close()
+    # db = get_db()
+    # cur = db.cursor()
+    # artdisplays = cur.execute(
+    #     'SELECT *'
+    #     ' FROM artDisplay'
+    #     ' ORDER BY created DESC'
+    # ).fetchall()
+    # cur.close()
+    table_service = TableService(account_name='artsharestorage', account_key='zCN3F1TuFjeSw8alIDF0bcvSQoLe5tJHRcavpRKZ31JUUkPuHLtVSqP9WJ3oQU7ty/ZAisWl8CDcFtZHsZ15MQ==')
+    artuploads = table_service.query_entities('artuploads', filter="PartitionKey eq '" + PARITION_KEY + "'")
     
-    return jsonify([to_json(artdisplay) for artdisplay in artdisplays])
+    return jsonify([to_json(artupload) for artupload in artuploads])
 
 @bp.route('/artdisplay', methods=['POST'])
 def create():
@@ -49,12 +55,29 @@ def create():
     elif 'curatorNotes' not in request.form:
         error = 'curatorNotes is required.'
     else:
+        newId = str(uuid.uuid1())
         artPhoto = request.files["artPhoto"]
         print(artPhoto)
-        filename = secure_filename(artPhoto.filename)
+        fileExtension = artPhoto.filename.rsplit('.', 1)[1]
+        filename = secure_filename(newId + "_photo." + fileExtension)
         print(filename)
-        artPhoto.save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
-        photoUrl = url_for('uploaded_file', filename=filename, _external=True)
+        # artPhoto.save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
+
+        connect_str = "DefaultEndpointsProtocol=https;AccountName=artsharestorage;AccountKey=zCN3F1TuFjeSw8alIDF0bcvSQoLe5tJHRcavpRKZ31JUUkPuHLtVSqP9WJ3oQU7ty/ZAisWl8CDcFtZHsZ15MQ==;EndpointSuffix=core.windows.net"
+        blob_service_client = BlobServiceClient.from_connection_string(connect_str)
+        container_name = "artuploadphotos"
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=filename)
+        # print(artPhoto.read())
+        # print(artPhoto.stream.read())
+        blob_client.upload_blob(artPhoto.stream.read())
+
+
+
+
+        print(blob_client)
+        # apiObject.blobUri = "https://" + azureStorageAccountName + ".blob.core.windows.net/" + exports.blobContainer + "/" + apiObject.id + "." + fileExtension;
+        print(blob_client.get_blob_properties())
+        photoUrl = blob_client.url
         print(photoUrl)
         artName = request.form["artName"]
         print(artName)
@@ -65,34 +88,57 @@ def create():
         curatorNotes = request.form["curatorNotes"]
         print(curatorNotes)
         
-        db = get_db()
-        cur = db.cursor()
-        cur.execute(
-                'INSERT INTO artDisplay (upload_name, art_name, artist_name, curator_name, curator_notes)'
-                ' VALUES (?,?,?,?,?)',
-                (filename,artName,artistName,curatorName,curatorNotes,)
-            )
-        createdId = cur.lastrowid
+        table_service = TableService(account_name='artsharestorage', account_key='zCN3F1TuFjeSw8alIDF0bcvSQoLe5tJHRcavpRKZ31JUUkPuHLtVSqP9WJ3oQU7ty/ZAisWl8CDcFtZHsZ15MQ==')
+        artupload = {
+            'PartitionKey': PARITION_KEY,
+            'RowKey': newId,
+            'artName': artName,
+            'artistName': artistName,
+            'curatorName': curatorName,
+            'curatorNotes': curatorNotes,
+            'photoUrl': photoUrl
+        }
+        table_service.insert_entity('artuploads', artupload)
+
+        # Your Account SID from twilio.com/console
+        account_sid = "ACce268cc948742f9dcec8827d91f45965"
+        # Your Auth Token from twilio.com/console
+        auth_token  = "1d407a9350de8d6260cfb5ea64969299"
+
+        client = Client(account_sid, auth_token)
+
+        message = "New photo uploaded: " + photoUrl
+        message = client.messages.create(
+            to="+12245672736", 
+            from_="+19382010795",
+            body=message)
         
-        error = None
-        artDisplay = cur.execute(
-            'SELECT * FROM artDisplay WHERE id = ?', (createdId,)
-        ).fetchone()
-        db.commit()
-        cur.close()
-        if artDisplay is None:
+        # db = get_db()
+        # cur = db.cursor()
+        # cur.execute(
+        #         'INSERT INTO artDisplay (upload_name, art_name, artist_name, curator_name, curator_notes)'
+        #         ' VALUES (?,?,?,?,?)',
+        #         (filename,artName,artistName,curatorName,curatorNotes,)
+        #     )
+        # createdId = cur.lastrowid
+        
+        # error = None
+        # artDisplay = cur.execute(
+        #     'SELECT * FROM artDisplay WHERE id = ?', (createdId,)
+        # ).fetchone()
+        # db.commit()
+        # cur.close()
+        if artupload is None:
             error = 'unknown'
         else:
-            return to_json(artDisplay)
+            return to_json(artupload)
     return { 'error' : error }
 
 def to_json(art_display_row):
     return {
-        'id': art_display_row['id'],
-        'created': art_display_row['created'],
-        'art_url' : url_for('uploaded_file', filename=art_display_row['upload_name'], _external=True),
-        'art_name' : art_display_row['art_name'],
-        'artist_name' : art_display_row['artist_name'],
-        'curator_name' : art_display_row['curator_name'],
-        'curator_notes' : art_display_row['curator_notes']
+        'art_url' : art_display_row['photoUrl'],
+        'art_name' : art_display_row['artName'],
+        'artist_name' : art_display_row['artistName'],
+        'curator_name' : art_display_row['curatorName'],
+        'curator_notes' : art_display_row['curatorNotes']
     }
